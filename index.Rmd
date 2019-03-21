@@ -1,0 +1,437 @@
+---
+title: "Detention Center Data Released by the Department of Homeland Security"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: flatly
+    social: menu
+    orientation: columns
+    
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(lubridate)
+library(tidyverse)
+library(forcats)
+library(rio)
+library(here)
+library(colorblindr)
+library(gghighlight)
+library(maps)
+library(mapdata)
+
+library(knitr)
+library(tidyr)
+library(readr)
+library(purrr)
+library(readxl)
+library(fs)
+```
+
+```{r import and tidy, include = FALSE, warning = FALSE}
+icefacilities <- read_xlsx(here("ice_facility_list.xlsx"), sheet = "Facility List - Main", skip = 8)
+
+View(icefacilities)
+str(icefacilities)
+
+#Data in ice facilities is not tidy. Notice that columns for fiscal years have the year in the column title. 
+tidyd <- icefacilities %>%
+  gather(year, ADP, matches("^FY\\d\\d ADP")) %>%
+  mutate(year = parse_number(year),
+         year = 2000 + year) %>% #To make the years 2018, for example, rather than 18
+  select(Name, State, year, ADP) #To select just these columns
+```
+
+```{r viz1 data, include = FALSE}
+
+firstgraphdata <- tidyd %>%
+  group_by(State, year) %>%
+  summarize(total_ADP = sum(as.numeric(ADP))) %>%
+  filter(year == 2018) %>%
+  ungroup() 
+
+#Highlighting the "redacted" factor:
+State<-unique(firstgraphdata$State)
+label_color <- ifelse(State == "Redacted", 
+                "red",
+                "black")
+
+label_face <- ifelse(State == "Redacted", 
+                "bold",
+                "plain")
+```
+
+```{r viz2 data, include = FALSE}
+
+secondgraphdata <- icefacilities %>%
+  gather(year, ADP, 22:31) %>%
+  mutate(year = parse_number(year),
+        year = 2000 + year,
+        ADP = as.numeric(ADP),
+        ICEfundedYN = as.factor(`ICE Funded`)) %>%
+  group_by(year, ICEfundedYN) %>%
+  summarize(totalADP = sum(ADP)) %>%
+  mutate(ICEfundedYN = fct_recode(ifelse(ICEfundedYN == "Yes", "Funded by ICE", "Other funding source(s)")))
+```
+
+```{r viz3 data, include = FALSE}
+icefacilities2 <- read_xlsx(here("ice_facility_list.xlsx"), sheet = "Authorized List - DMCP Detailed", skip = 7)
+
+thirdgraphdata <- icefacilities2 %>%
+  mutate(type = as.factor(Type)) %>%
+  rename(male_crim =`Male Crim`, male_noncrim = `Male Non-Crim`, female_crim = `Female Crim`, female_noncrim = `Female Non-Crim`) %>%
+  mutate(totalfemales = female_crim + female_noncrim, totalmales = male_crim + male_noncrim) %>%
+  select(type, male_crim, male_noncrim, female_crim, female_noncrim, totalfemales, totalmales) %>%
+  gather(genderC_YN, sum, 2:5) %>%
+  separate(genderC_YN, c("gender", "crimYN"), sep = "_") 
+```
+
+```{r viz3 data take2, include = FALSE}
+
+#Second iteration from different tab, more inclusive facility list
+thirdgraph_levelup <- icefacilities %>%
+  mutate(type = as.factor(Type)) %>%
+  rename(male_crim =`Male Crim`, male_noncrim = `Male Non-Crim`, female_crim = `Female Crim`, female_noncrim = `Female Non-Crim`) %>%
+  select(Name, type, male_crim, male_noncrim, female_crim, female_noncrim) %>%
+  gather(genderC_YN, sum, 3:6) %>%
+  separate(genderC_YN, c("gender", "crimYN"), sep = "_")
+```
+
+```{r viz4 data, include = FALSE}
+
+fourthgraph <- icefacilities %>%
+  mutate(type = as.factor(Type)) %>%
+  rename(male_crim =`Male Crim`, male_noncrim = `Male Non-Crim`, female_crim = `Female Crim`, female_noncrim = `Female Non-Crim`) %>%
+  rename(threatlevel_1 = `ICE Threat Level 1`, threatlevel_2 = `ICE Threat Level 2`, threatlevel_3 = `ICE Threat Level 3`, threatlevel_0 = `No ICE Threat Level`) %>%
+  select(type, male_crim, male_noncrim, female_crim, female_noncrim, threatlevel_1, threatlevel_2, threatlevel_3, threatlevel_0) %>%
+  gather(threatlevel, sum, 6:9) %>%
+  mutate(threatlevel = as.factor(parse_number(threatlevel)))
+```
+
+```{r v5 data, include = FALSE}
+
+fifthplot <- icefacilities %>%
+  mutate(ICEfundedYN = as.factor(`ICE Funded`)) %>%
+  filter(ICEfundedYN == "Yes") %>%
+  filter(`Per Diem Rate Detailed` != "NA") %>%
+  filter(`Per Diem Rate Detailed` != "b)(4)") %>%
+  mutate(perdiem_gross = parse_number(`Per Diem Rate Detailed`)) %>%
+  mutate(fy18avgdetentionperiod = as.numeric(`FY18 ALOS`)) 
+
+```
+
+
+
+Visualization 1
+================================= 
+
+
+Column {.tabset}
+---------------------------------
+
+
+### First iteration
+
+
+```{r viz1 iteration1, fig.height = 8, fig.width = 7}
+
+firstgraphdata %>%
+  ggplot(aes(State, total_ADP)) + #This calls count
+  geom_col() +
+  geom_col() +
+  coord_flip() +
+  labs(x = "") +
+  scale_y_continuous(name = "Average Daily Number of Detainees Statewide") +
+  labs(title = "Number of People in ICE Facilities on a Typical Day in 2018", 
+       subtitle = "DHS-supplied data on where detainees are held",
+       caption = "Data from the [Immigrant Legal Resource Center]
+       (https://immigrantjustice.org/ice-detention-facilities-november-2017)") 
+``` 
+
+
+>  It merits noting first, that I had a lay audience in mind for this graph. The basic components of the plot are present--it has a title and subtitle, a label for the (now-flipped) y-axis, and a caption that cites the source of the data. I think the decision to flip the axes increases the readability of the plot by a lot, but the graph is (a) not pleasant to look at and (b) not easy to make use of because the states are listed in reverse alphabetical order. This allows the reader to find individual states of (perhaps incidental) interest to the reader, but it does not instruct the reader on where to place their attention. Any patterns detectable from the bar graph are left for the reader to discern.
+
+### Second iteration
+
+
+```{r viz1 iteration2, fig.height = 8, fig.width = 7}  
+
+firstgraphdata %>%
+  ggplot(aes(fct_reorder(State, total_ADP), total_ADP)) + #This calls count
+  geom_col() +
+  geom_col() +
+  coord_flip() +
+  labs(x = "") + 
+#ylim(0,1200) + I tried confining the y-axis to omit the space between state names and related bar
+  scale_y_continuous(name = "Average Daily Number of Detainees Statewide") +
+  labs(title = "Number of People in ICE Facilities on a Typical Day in 2018", 
+       subtitle = "DHS-supplied data on where detainees are held",
+       caption = "Data from the [Immigrant Legal Resource Center]
+       (https://immigrantjustice.org/ice-detention-facilities-november-2017)")+
+  theme(plot.background = element_rect(fill = "transparent", colour = NA)) +
+theme_minimal() +
+   theme(axis.text.x = element_text(color = label_color,
+                                  face = label_face))
+```
+
+
+>Reordering the states in order of the variable of interest (average daily number of detainees statewide) sends a clearer invitation to the reader to explore which states have the high number of detainees on a typical day, and to consider, too, any commonalities among the states that have the highest or lowest (even zero) detainees. The use of the minimal theme, I think, also increases the visual appeal of the graph. It looks less like something that you would see in an academic paper and more plausibly like something that could be in The Huffington Post or another forum that targets interested but lay readers. I briefly considered omitting the states with no detainees, but I think that the states without detainees naturally invite the reader to consider political and regional features of these states. This iteration of the graph also draws attention to the fact that the location of a large number of detainees is redacted. This doesn't mean, of course, that all of the detainees counted by this bar in the bar graph are in the same redacted location, but it does mean that the daily number of detainees whose location is redacted is comparable to the average number of detainees in the state of California. A final iteration of the plot is prompts the reader to ask, "Why is this (already non-specific, ie., state-level) location information redacted in the Deparment of Homeland Security's fulfillment of the Freedom Of Information Act (FOIA) request?"
+
+### Third iteration
+
+
+```{r viz1 iteration3, fig.height = 8, fig.width = 7}
+
+firstgraphdata %>%
+  ggplot(aes(fct_reorder(State, total_ADP), total_ADP)) + #This calls count
+  geom_col() +
+  geom_col(data = filter(firstgraphdata,
+                           State == "Redacted"),
+           fill = "red") +
+  coord_flip() +
+  labs(x = "") +
+  #ylim(0,1200) + I tried confining the y-axis to omit the space between state names and related bar
+  scale_y_continuous(name = "Average Daily Number of Detainees Statewide") +
+  labs(title = "Number of People in ICE Facilities on a Typical Day in 2018", 
+       subtitle = "DHS-supplied data on where detainees are held",
+       caption = "Data from the [Immigrant Legal Resource Center]
+       (https://immigrantjustice.org/ice-detention-facilities-november-2017)")+
+  theme(plot.background = element_rect(fill = "transparent", colour = NA)) +
+theme_minimal() +
+   theme(axis.text.x = element_text(color = label_color,
+                                  face = label_face))
+```
+
+
+> My remaining concern with this visualization is the gap between the state labels and the bars. My final iteration of this visualization reflects the helpful input of a peer reviewer on this front. 
+
+### Fourth iteration
+
+
+```{r viz1 iteration4, fig.height = 8, fig.width = 7}
+
+#Highlighting the "redacted" factor:
+State<-unique(firstgraphdata$State)
+label_color <- ifelse(State == "Redacted", 
+                "red",
+                "black")
+
+label_face <- ifelse(State == "Redacted", 
+                "bold",
+                "plain")
+
+firstgraphdata %>%
+  ggplot(aes(fct_reorder(State, total_ADP), total_ADP)) + #This calls count
+  geom_col() +
+  geom_col(data = filter(firstgraphdata,
+                           State == "Redacted"),
+           fill = "red") +
+  coord_flip() +
+  labs(x = "") +
+  scale_y_continuous(name = "Average Daily Number of Detainees Statewide", expand=c(0,0)) +
+  labs(title = "Number of People in ICE Facilities on a Typical Day in 2018", 
+       subtitle = "DHS-supplied data on where detainees are held",
+       caption = "Data from the [Immigrant Legal Resource Center]
+       (https://immigrantjustice.org/ice-detention-facilities-november-2017)")+
+  theme(plot.background = element_rect(fill = "transparent", colour = NA)) +
+theme_minimal() +
+   theme(axis.text.x = element_text(color = label_color,
+                                  face = label_face))
+```
+
+
+>An additional argument to the `scale_y_continuous()` function closed the gap I noted earlier between the state labels and the bars corresponding to them. Without the gap, the bar graph is much more refreshing to look at! Based on feedback that maybe the graph was small in others' preview windows, I also adjusted the figure width and height. 
+
+
+Visualization 2 
+===================================== 
+
+Column {data-width=650}
+-----------------------------------------------------------------------
+
+### Final iteration
+
+```{r viz2 iteration3}
+
+secondgraphdata %>% ggplot(aes(year, totalADP, color = ICEfundedYN)) +
+  geom_line() +
+  labs(x ="") +
+  scale_y_continuous(name = "Average daily population of detainees, nationally") +
+  scale_x_continuous(breaks = c(2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018)) +
+  labs(title = "Number of detainees in ICE-funded facilities has been increasing since 2015", 
+       caption = "Data from the [Immigrant Legal Resource Center]
+       (https://immigrantjustice.org/ice-detention-facilities-november-2017)")+
+  geom_vline(aes(xintercept = 2015), color = "gray80", linetype = "dashed") +
+  theme(plot.background = element_rect(fill = "transparent", colour = NA)) +
+theme_minimal() +
+  geom_text(data = filter(secondgraphdata, year == "2011"),
+            aes(y = totalADP, label = ICEfundedYN), 
+            #nudge_x = 1) +
+            vjust = -1.1)+
+  guides(color = "none")
+```
+
+
+>After comparing Iteration 2 and 3 side by side, the vertical line does draw the eye to the unmistakable increase in the line that corresponds to ICE-funded facilities. Final iteration of this plot does have the vertical line.  
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### First iteration
+
+```{r viz2 iteration1}
+
+#Also intended for a non-specialist audience 
+secondgraphdata <- icefacilities %>%
+  gather(year, ADP, 22:31) %>%
+  mutate(year = parse_number(year),
+        year = 2000 + year,
+        ADP = as.numeric(ADP),
+        ICEfundedYN = as.factor(`ICE Funded`)) %>%
+  group_by(year, ICEfundedYN) %>%
+  summarize(totalADP = sum(ADP)) %>%
+  mutate(ICEfundedYN = fct_recode(ifelse(ICEfundedYN == "Yes", "Funded by ICE", "Other funding source(s)")))
+                                  
+secondgraphdata %>%  ggplot(aes(year, totalADP, color = ICEfundedYN)) +
+  geom_line() +
+  labs(x ="") +
+  scale_y_continuous(name = "Average daily population of detainees, nationally") +
+  labs(title = "Number of detainees in ICE-funded facilities has been increasing since 2015", 
+       caption = "Data from the [Immigrant Legal Resource Center]
+       (https://immigrantjustice.org/ice-detention-facilities-november-2017)")
+```
+
+
+>The legend for the two ICEFundedYN factor takes up a lot of space. I labelled the lines directly on the plot. Given this, colorblindness and/or black and white printing should not preclude accurate interpretation of the plot. 
+
+### Second iteration
+
+```{r viz2 iteration2}
+
+secondgraphdata %>% ggplot(aes(year, totalADP, color = ICEfundedYN)) +
+  geom_line() +
+  labs(x ="") +
+  scale_y_continuous(name = "Average daily population of detainees, nationally") +
+  scale_x_continuous(breaks = c(2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018)) +
+  labs(title = "Number of detainees in ICE-funded facilities has been increasing since 2015", 
+       caption = "Data from the [Immigrant Legal Resource Center]
+       (https://immigrantjustice.org/ice-detention-facilities-november-2017)")+
+  theme(plot.background = element_rect(fill = "transparent", colour = NA)) +
+theme_minimal() +
+  geom_text(data = filter(secondgraphdata, year == "2011"),
+            aes(y = totalADP, label = ICEfundedYN), 
+            #nudge_x = 1) +
+            vjust = -1.1)+
+  guides(color = "none")
+```
+
+
+>Adding odd years to axis labels seems to reduce cognitive load when interpreting the graph. I wavered  a bit about whether to add a vertical line to indicate 2015 on the plot and would be less equivocal about the vertical line if I could label the line with something like, "X policy change took effect," which would make for a more compelling focal point. 
+
+
+Visualization 3 
+===================================== 
+
+
+Column {.tabset}
+-------------------------------------
+
+
+### First iteration
+```{r viz3 iteration1}
+
+thirdgraphdata <- icefacilities2 %>%
+  mutate(type = as.factor(Type)) %>%
+  rename(male_crim =`Male Crim`, male_noncrim = `Male Non-Crim`, female_crim = `Female Crim`, female_noncrim = `Female Non-Crim`) %>%
+  mutate(totalfemales = female_crim + female_noncrim, totalmales = male_crim + male_noncrim) %>%
+  select(type, male_crim, male_noncrim, female_crim, female_noncrim, totalfemales, totalmales) %>%
+  gather(genderC_YN, sum, 2:5) %>%
+  separate(genderC_YN, c("gender", "crimYN"), sep = "_") 
+  
+thirdgraphdata %>% ggplot(aes(crimYN, sum)) +
+  geom_col(aes(fill = gender)) +
+  facet_wrap(~type)
+```
+
+
+>For this plot, I was interested in showing how many of detainees are characterized as "criminal" or "non-criminal," and to further show the gender composition (rendered as  male or female)  of each of these "criminal" and "non-criminal categories. I also wanted to look at these break-downs by facility type, to see if specific types of facilities are detaining more people without designation as "criminal." I was not sure what this data would look like or suggest. The differences between facility types, though of interest to me, are frankly a little bit convoluted, even after extensive review of the explanations embedded within the released data. "IGSA," for example, is an inter-governmental service agreement, whereas "USMS IGA" is a United States Marshalls Service inter-governmental agreement. For this reason alone, this plot would need to be for a specialized audience if it were presented as-is without clear and accessible explanations about what distinguishes facility types. Having seen the graph above, I observe that the data comes from a list of facilities authorized through the Detention Management Control Program. It does not include facilities that fall under the Office of Refugee Resettlement or facilities where families are held. For this reason I am looked to another tab in the original Excel sheet that has a more inclusive list of facilities.
+
+
+### Second iteration
+
+```{r viz3 iteration2}
+
+#Second iteration from different tab, more inclusive facility list
+thirdgraph_levelup <- icefacilities %>%
+  mutate(type = as.factor(Type)) %>%
+  rename(male_crim =`Male Crim`, male_noncrim = `Male Non-Crim`, female_crim = `Female Crim`, female_noncrim = `Female Non-Crim`) %>%
+  select(Name, type, male_crim, male_noncrim, female_crim, female_noncrim) %>%
+  gather(genderC_YN, sum, 3:6) %>%
+  separate(genderC_YN, c("gender", "crimYN"), sep = "_")
+
+thirdgraph_levelup  %>% ggplot(aes(crimYN, sum)) +
+  geom_col(aes(fill = gender))+
+  facet_wrap(~type)
+```
+
+
+>Too many facilities to make sense of! Given that the distinctions between the facility types are not entirely clear, this just muddies the waters. (Though it's worth noting that the ORR, the Office of Refugee Resettlement, appears to be reporting "non-criminal" detainees exclusively).
+
+
+### Third iteration
+```{r viz3 iteration3}
+
+thirdgraph_levelup  %>% ggplot(aes(crimYN, sum)) +
+  geom_col(aes(fill = gender))
+```
+
+
+>This collapses across facility type and conveys a clearer message. The number of male detainees is many times that of female detainees, and the majority of detainees are not designated as criminal. This latter point is especially true of female detainees. This could be for a more specialized audience but needs polishing with a title, subtitle, and better axis labels. 
+
+Visualization 4 
+=====================================
+
+Column {data-width=350}
+-------------------------------------
+
+First iteration
+```{r viz4 iteration1}
+
+fourthgraph %>% ggplot(aes(threatlevel, sum)) +
+  geom_col(aes(fill = type)) +
+  labs(x = "ICE Threat Level (0 indicates no threat)") +
+  scale_y_continuous(name = "Detainees in 2018") +
+  labs(title = "Most Detainees Present Zero Threat", 
+       subtitle = "FY '18 detainees by threat level and detention site type") +
+  theme(plot.background = element_rect(fill = "transparent", colour = NA))
+
+```
+
+
+>This plot is intended for a reader who is more of an expert in this area. Limitations of this plot include the hard-to-distinguish (and not colorblind-friendly) colors, which also increas cognitive load when trying to make use of the legend to interpret the proportions in the bars. 
+
+Column {data-width=350}
+-------------------------------------
+
+Second iteration
+```{r viz4 iteration2}
+
+fourthgraph %>% ggplot(aes(threatlevel, sum)) +
+  geom_col(aes(fill = type), show.legend = FALSE) +
+  labs(x = "ICE Threat Level (0 indicates no threat)") +
+  scale_y_continuous(name = "Detainees in 2018") +
+  labs(title = "Most Detainees Present Zero Threat", 
+       subtitle = "FY '18 detainees by threat level and detention site type*",
+       caption = "*The other detention sites types (BOP, MIRP, and others) all have 0 or close to 0 number of detainees.") +
+  theme(plot.background = element_rect(fill = "transparent", colour = NA))+
+  scale_fill_OkabeIto()+
+  annotate("label", x = 1, y = 2000, label = "USMS IGA")+
+  annotate("label", x = 1, y = 4380, label = "SPC")+
+  annotate("label", x = 1, y = 8000, label = "ORR")+
+  annotate("label", x = 1, y = 16000, label = "IGSA")+
+  annotate("label", x = 1, y = 23500, label = "CDF")+
+  theme_minimal()
+```
+
+
+>I owe these improvements to my peer reviewer, who modified the theme to make it colorblind friendly and added labels so that the legend could me omitted. This reduces cognitive load (in a manner similar to Visualization 2 but all the more necessary here).
